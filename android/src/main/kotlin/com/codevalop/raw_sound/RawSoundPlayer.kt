@@ -61,7 +61,16 @@ class RawSoundPlayer(@NonNull androidContext: Context, @NonNull bufferSize: Int,
                 .setChannelMask(if (nChannels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO)
                 .build()
         Log.i(TAG, "Create audio track w/ bufferSize: $bufferSize, sampleRate: ${format.sampleRate}, encoding: ${format.encoding}, nChannels: ${format.channelCount}")
-        audioTrack = AudioTrack(attributes, format, bufferSize, AudioTrack.MODE_STREAM, sessionId)
+
+        var mBufferSize = bufferSize;
+        if(mBufferSize == -1) {
+          mBufferSize = AudioTrack.getMinBufferSize(
+                    sampleRate, if (nChannels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT);
+
+        }
+
+        audioTrack = AudioTrack(attributes, format, mBufferSize, AudioTrack.MODE_STREAM, sessionId)
+
         Log.i(TAG, "sessionId: ${audioTrack.audioSessionId}, bufferCapacityInFrames: ${audioTrack.bufferCapacityInFrames}, bufferSizeInFrames: ${audioTrack.bufferSizeInFrames}")
     }
 
