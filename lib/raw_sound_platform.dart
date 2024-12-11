@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:collection/collection.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
@@ -22,18 +23,17 @@ class RawSoundPlayerPlatform extends PlatformInterface {
   static set instance(RawSoundPlayerPlatform instance) {
     PlatformInterface.verifyToken(instance, _token);
     _instance = instance;
+    _channel.setMethodCallHandler(_methodCallHandler);
   }
 
   static final _players = <RawSoundPlayerPrototype, int>{};
 
-  static void setFeedCallback(Function(int)? callback) {
-    _channel.setMethodCallHandler(_methodCallHandler);
-  }
-
   static Future<dynamic> _methodCallHandler(MethodCall call) async {
+    debugPrint("_methodCallHandler, call.method is ${call.method}");
     switch (call.method) {
       case 'onFeedCompleted':
-        int playerId = call.arguments["playerId"];
+        debugPrint("onFeedCompleted received, playerId: ${call.arguments["playerId"]}");
+        int playerId = call.arguments["playerId"] as int;
         MapEntry? entry = _players.entries.firstWhereOrNull((element) => element.value == playerId);
         if(entry !=null) {
           (entry.key as RawSoundPlayerPrototype).onFeedCompleted();

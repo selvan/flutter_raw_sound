@@ -132,8 +132,12 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
         val player =
             RawSoundPlayer(androidContext, bufferSize, sampleRate, nChannels, pcmType, playerId)
         player.setOnFeedCompleted {
-            val response: Map<String, Object> = HashMap()
-            channel.invokeMethod("onFeedCompleted", response)
+            Handler(Looper.getMainLooper()).post {
+                val response: MutableMap<String, Any> = HashMap()
+                response["playerId"] = playerId
+                channel.invokeMethod("onFeedCompleted", response)
+                Log.d(TAG, "sent onFeedCompleted for playerId: ${playerId}")
+            }
         }
         players[playerId] = player
         sendResultInt(playerId, result)
@@ -145,27 +149,28 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
             if (player.release()) {
                 players.remove(playerId)
                 sendResultInt(playerId, result)
-                return@let;
+            } else {
+                sendResultError(
+                    "Error", "Failed to release player",
+                    null, result
+                )
             }
         }
-        sendResultError(
-            "Error", "Failed to release player",
-            null, result
-        )
     }
 
     private fun play(@NonNull playerId: Int, @NonNull result: MethodChannel.Result) {
         val player = players[playerId]
+        Log.d(TAG, "playerId: ${playerId}, play, hasPlayer = ${player != null}")
         player?.let {
             if (player.play()) {
                 sendResultInt(player.getPlayState(), result)
-                return@let
+            } else {
+                sendResultError(
+                    "Error", "Failed to play player",
+                    null, result
+                )
             }
         }
-        sendResultError(
-            "Error", "Failed to play player",
-            null, result
-        )
     }
 
     private fun stop(@NonNull playerId: Int, @NonNull result: MethodChannel.Result) {
@@ -173,13 +178,13 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
         player?.let {
             if (player.stop()) {
                 sendResultInt(player.getPlayState(), result)
-                return@let
+            } else {
+                sendResultError(
+                    "Error", "Failed to stop player",
+                    null, result
+                )
             }
         }
-        sendResultError(
-            "Error", "Failed to stop player",
-            null, result
-        )
     }
 
     private fun resume(@NonNull playerId: Int, @NonNull result: MethodChannel.Result) {
@@ -187,14 +192,13 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
         player?.let {
             if (player.resume()) {
                 sendResultInt(player.getPlayState(), result)
-                return@let
+            } else {
+                sendResultError(
+                    "Error", "Failed to resume player",
+                    null, result
+                )
             }
         }
-
-        sendResultError(
-            "Error", "Failed to resume player",
-            null, result
-        )
     }
 
     private fun pause(@NonNull playerId: Int, @NonNull result: MethodChannel.Result) {
@@ -202,13 +206,13 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
         player?.let {
             if (player.pause()) {
                 sendResultInt(player.getPlayState(), result)
-                return@let
+            } else {
+                sendResultError(
+                    "Error", "Failed to pause player",
+                    null, result
+                )
             }
         }
-        sendResultError(
-            "Error", "Failed to pause player",
-            null, result
-        )
     }
 
     private fun feed(@NonNull playerId: Int, @NonNull data: ByteArray, @NonNull result: MethodChannel.Result) {
@@ -226,12 +230,7 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
                     )
                 }
             }
-            return@let
         }
-        sendResultError(
-            "Error", "Failed to feed player",
-            null, result
-        )
     }
 
     private fun setVolume(
@@ -243,12 +242,12 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
         player?.let {
             if (player.setVolume(volume)) {
                 sendResultInt(player.getPlayState(), result)
-                return@let
+            } else {
+                sendResultError(
+                    "Error", "Failed to setVolume player",
+                    null, result
+                )
             }
         }
-        sendResultError(
-            "Error", "Failed to setVolume player",
-            null, result
-        )
     }
 }

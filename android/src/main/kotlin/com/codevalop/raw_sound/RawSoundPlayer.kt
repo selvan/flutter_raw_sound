@@ -7,12 +7,15 @@ import android.media.AudioManager
 import android.media.AudioTrack
 import android.util.Log
 import androidx.annotation.NonNull
-import kotlinx.coroutines.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import java.nio.ByteBuffer
+import java.util.concurrent.atomic.AtomicBoolean
+
 
 enum class PlayState {
     Stopped,
@@ -26,8 +29,14 @@ enum class PCMType {
 }
 
 /** RawSoundPlayer */
-class RawSoundPlayer(@NonNull androidContext: Context, @NonNull bufferSize: Int,
-                     @NonNull sampleRate: Int, @NonNull nChannels: Int, @NonNull pcmType: PCMType, @NonNull playerId: Int) {
+class RawSoundPlayer(
+    @NonNull androidContext: Context,
+    @NonNull bufferSize: Int,
+    @NonNull sampleRate: Int,
+    @NonNull nChannels: Int,
+    @NonNull pcmType: PCMType,
+    @NonNull playerId: Int,
+) {
     companion object {
         const val TAG = "RawSoundPlayer"
     }
@@ -38,6 +47,7 @@ class RawSoundPlayer(@NonNull androidContext: Context, @NonNull bufferSize: Int,
     private val pcmType: PCMType
     private val playerId: Int
     private var onFeedCompleted: () -> Unit = {}
+    private val isLooping = AtomicBoolean(false)
 
     init {
         require(nChannels == 1 || nChannels == 2) { "Only support one or two channels" }
@@ -46,30 +56,39 @@ class RawSoundPlayer(@NonNull androidContext: Context, @NonNull bufferSize: Int,
         this.pcmType = pcmType
         this.playerId = playerId
         val attributes = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                .build()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+            .build()
         val encoding = when (pcmType) {
             PCMType.PCMI16 -> AudioFormat.ENCODING_PCM_16BIT
             PCMType.PCMF32 -> AudioFormat.ENCODING_PCM_FLOAT
         }
         val format = AudioFormat.Builder()
-                .setEncoding(encoding)
-                .setSampleRate(sampleRate)
-                .setChannelMask(if (nChannels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO)
-                .build()
-        Log.i(TAG, "Create audio track w/ bufferSize: $bufferSize, sampleRate: ${format.sampleRate}, encoding: ${format.encoding}, nChannels: ${format.channelCount}")
+            .setEncoding(encoding)
+            .setSampleRate(sampleRate)
+            .setChannelMask(if (nChannels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO)
+            .build()
+        Log.i(
+            TAG,
+            "Create audio track w/ bufferSize: $bufferSize, sampleRate: ${format.sampleRate}, encoding: ${format.encoding}, nChannels: ${format.channelCount}"
+        )
 
         var mBufferSize = bufferSize;
-        if(mBufferSize == -1) {
-          mBufferSize = AudioTrack.getMinBufferSize(
-                    sampleRate, if (nChannels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT);
+        if (mBufferSize == -1) {
+            mBufferSize = AudioTrack.getMinBufferSize(
+                sampleRate,
+                if (nChannels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO,
+                AudioFormat.ENCODING_PCM_16BIT
+            );
 
         }
 
         audioTrack = AudioTrack(attributes, format, mBufferSize, AudioTrack.MODE_STREAM, sessionId)
 
-        Log.i(TAG, "sessionId: ${audioTrack.audioSessionId}, bufferCapacityInFrames: ${audioTrack.bufferCapacityInFrames}, bufferSizeInFrames: ${audioTrack.bufferSizeInFrames}")
+        Log.i(
+            TAG,
+            "sessionId: ${audioTrack.audioSessionId}, bufferCapacityInFrames: ${audioTrack.bufferCapacityInFrames}, bufferSizeInFrames: ${audioTrack.bufferSizeInFrames}"
+        )
     }
 
     fun release(): Boolean {
@@ -93,7 +112,7 @@ class RawSoundPlayer(@NonNull androidContext: Context, @NonNull bufferSize: Int,
     }
 
     fun play(): Boolean {
-        if(audioTrack.playState == AudioTrack.PLAYSTATE_PLAYING) {
+        if (audioTrack.playState == AudioTrack.PLAYSTATE_PLAYING) {
             return true;
         }
         try {
@@ -103,6 +122,16 @@ class RawSoundPlayer(@NonNull androidContext: Context, @NonNull bufferSize: Int,
             return false
         }
 
+        loopAllContent()
+        Log.d(TAG, "<-- queUseBuffer")
+        return true
+    }
+
+    private fun loopAllContent() {
+        val _isReadyToGo = isLooping.compareAndSet(false, true)
+        if (!_isReadyToGo) {
+            return
+        }
         GlobalScope.launch(Dispatchers.IO) {
             Log.d(TAG, "--> queUseBuffer")
             var nextBuffer = popBuffer();
@@ -117,9 +146,15 @@ class RawSoundPlayer(@NonNull androidContext: Context, @NonNull bufferSize: Int,
                 nextBuffer = popBuffer();
             }
             onFeedCompleted()
+            isLooping.set(false)
+
+            synchronized(this) {
+                val size = buffers.size
+                if (size > 0) {
+                    loopAllContent();
+                }
+            }
         }
-        Log.d(TAG, "<-- queUseBuffer")
-        return true
     }
 
     fun stop(): Boolean {
@@ -163,6 +198,10 @@ class RawSoundPlayer(@NonNull androidContext: Context, @NonNull bufferSize: Int,
         GlobalScope.launch(Dispatchers.Default) {
             // Log.d(TAG, "--> queAddBuffer")
             addBuffer(ByteBuffer.wrap(data))
+            if (audioTrack.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                loopAllContent()
+            }
+            onDone(true)
             // Log.d(TAG, "<-- queAddBuffer")
         }
         // Log.d(TAG, "underrun count: ${audioTrack.underrunCount}")
