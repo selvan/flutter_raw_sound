@@ -12,6 +12,7 @@ dependencies:
   flutter:
     sdk: flutter
   synchronized: ^3.0.0
+  collection: ^1.18.0
   plugin_platform_interface: ^2.0.0
 
 dev_dependencies:

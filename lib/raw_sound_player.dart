@@ -56,6 +56,8 @@ class RawSoundPlayer implements RawSoundPlayerPrototype {
   /// Shortcut for ```player.playState == PlayState.stopped```
   bool get isStopped => _playState == PlayState.stopped;
 
+  Function()? _onFeedCompletedCallback;
+
   /// Initializes the player
   ///
   /// Throws an [Exception] if the player is already initialized
@@ -274,5 +276,15 @@ class RawSoundPlayer implements RawSoundPlayerPrototype {
     }
 
     print('RS:<--- _stop');
+  }
+
+  onFeedCompleted() {
+    if(this._onFeedCompletedCallback !=null) {
+      this._onFeedCompletedCallback!();
+    }
+  }
+
+  setOnFeedCompletedCallback(Function()? _onFeedCompletedCallback) {
+    this._onFeedCompletedCallback = _onFeedCompletedCallback;
   }
 }

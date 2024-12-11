@@ -10,13 +10,18 @@ import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
-import io.flutter.plugin.common.MethodChannel.Result
 
 
 /** RawSoundPlugin */
 class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
     companion object {
         const val TAG = "RawSoundPlugin"
+        private var idCounter = 0
+        private fun getId(): String {
+            val currId = "id#${idCounter}";
+            idCounter++;
+            return currId;
+        }
     }
 
     /// The MethodChannel that will the communication between Flutter and native Android
@@ -27,7 +32,7 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
 
     private lateinit var androidContext: Context
 
-    private var players: MutableList<RawSoundPlayer> = mutableListOf()
+    private var players: MutableMap<String, RawSoundPlayer> = mutableMapOf()
 
     override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(flutterPluginBinding.binaryMessenger, "codevalop.com/raw_sound")
@@ -36,22 +41,23 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
     }
 
     override fun onMethodCall(@NonNull call: MethodCall, @NonNull result: Result) {
-        var playerNo: Int = -1
+        var playerId: Int = -1
 
         if (call.method != "initialize") {
-            playerNo = call.argument<Int>("playerNo")!!
-            if (playerNo < 0 || playerNo > players.size) {
-                result.error("Invalid Args", "Invalid playerNo: $playerNo", "")
-                Log.e(TAG, "Invalid playerNo: $playerNo")
+            playerId = call.argument<Int>("playerId")!!
+            if (playerId < 0 || playerId > players.size) {
+                result.error("Invalid Args", "Invalid playerId: $playerId", "")
+                Log.e(TAG, "Invalid playerId: $playerId")
                 return
             }
-            // Log.d(TAG, "${call.method} w/ playerNo: $playerNo")
+            // Log.d(TAG, "${call.method} w/ playerId: $playerId")
         }
 
         when (call.method) {
             "getPlatformVersion" -> {
                 result.success("Android ${android.os.Build.VERSION.RELEASE}")
             }
+
             "initialize" -> {
                 val bufferSize = call.argument<Int>("bufferSize")!!
                 val sampleRate = call.argument<Int>("sampleRate")!!
@@ -59,29 +65,37 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
                 val pcmType = PCMType.values().getOrNull(call.argument<Int>("pcmType")!!)!!
                 initialize(bufferSize, sampleRate, nChannels, pcmType, result)
             }
+
             "release" -> {
-                release(playerNo, result)
+                release(playerId, result)
             }
+
             "play" -> {
-                play(playerNo, result)
+                play(playerId, result)
             }
+
             "stop" -> {
-                stop(playerNo, result)
+                stop(playerId, result)
             }
+
             "pause" -> {
-                pause(playerNo, result)
+                pause(playerId, result)
             }
+
             "resume" -> {
-                resume(playerNo, result)
+                resume(playerId, result)
             }
+
             "feed" -> {
                 val data = call.argument<ByteArray>("data")!!
-                feed(playerNo, data, result)
+                feed(playerId, data, result)
             }
+
             "setVolume" -> {
                 val volume = call.argument<Float>("volume")!!
-                setVolume(playerNo, volume, result)
+                setVolume(playerId, volume, result)
             }
+
             else -> {
                 result.notImplemented()
             }
@@ -92,99 +106,148 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
         channel.setMethodCallHandler(null)
     }
 
-    private fun sendResultError(@NonNull errorCode: String, @Nullable errorMessage: String,
-                                @Nullable errorDetails: Any?, @NonNull result: Result) {
+    private fun sendResultError(
+        @NonNull errorCode: String, @Nullable errorMessage: String,
+        @Nullable errorDetails: Any?, @NonNull result: Result,
+    ) {
         Handler(Looper.getMainLooper()).post {
             result.error(errorCode, errorMessage, errorDetails)
         }
     }
 
-    private fun sendResultInt(@NonNull playState: Int, @NonNull result: Result) {
+    private fun sendResultData(@NonNull payload: String, @NonNull result: Result) {
         Handler(Looper.getMainLooper()).post {
-            result.success(playState)
+            result.success(payload)
         }
     }
 
-    private fun initialize(@NonNull bufferSize: Int, @NonNull sampleRate: Int,
-                           @NonNull nChannels: Int, @NonNull pcmType: PCMType,
-                           @NonNull result: Result) {
-        val player = RawSoundPlayer(androidContext, bufferSize, sampleRate, nChannels, pcmType)
-        players.add(player)
-        sendResultInt(players.lastIndex, result)
-    }
+    private fun initialize(
+        @NonNull bufferSize: Int, @NonNull sampleRate: Int,
+        @NonNull nChannels: Int, @NonNull pcmType: PCMType,
+        @NonNull result: Result,
+    ) {
 
-    private fun release(@NonNull playerNo: Int, @NonNull result: Result) {
-        val player = players[playerNo]
-        if (player.release()) {
-            players.removeAt(playerNo)
-            sendResultInt(playerNo, result)
-        } else {
-            sendResultError("Error", "Failed to release player",
-                    null, result)
+        val playerId = getId();
+        val player =
+            RawSoundPlayer(androidContext, bufferSize, sampleRate, nChannels, pcmType, playerId)
+        player.setOnFeedCompleted {
+            val response: Map<String, Object> = HashMap()
+            channel.invokeMethod("onFeedCompleted", response)
         }
+        players[playerId] = player
+        sendResultData(playerId, result)
     }
 
-    private fun play(@NonNull playerNo: Int, @NonNull result: Result) {
-        val player = players[playerNo]
-        if (player.play()) {
-            sendResultInt(player.getPlayState(), result)
-        } else {
-            sendResultError("Error", "Failed to play player",
-                    null, result)
-        }
-    }
-
-    private fun stop(@NonNull playerNo: Int, @NonNull result: Result) {
-        val player = players[playerNo]
-        if (player.stop()) {
-            sendResultInt(player.getPlayState(), result)
-        } else {
-            sendResultError("Error", "Failed to stop player",
-                    null, result)
-        }
-    }
-
-    private fun resume(@NonNull playerNo: Int, @NonNull result: Result) {
-        val player = players[playerNo]
-        if (player.resume()) {
-            sendResultInt(player.getPlayState(), result)
-        } else {
-            sendResultError("Error", "Failed to resume player",
-                    null, result)
-        }
-    }
-
-    private fun pause(@NonNull playerNo: Int, @NonNull result: Result) {
-        val player = players[playerNo]
-        if (player.pause()) {
-            sendResultInt(player.getPlayState(), result)
-        } else {
-            sendResultError("Error", "Failed to pause player",
-                    null, result)
-        }
-    }
-
-    private fun feed(@NonNull playerNo: Int, @NonNull data: ByteArray, @NonNull result: Result) {
-        val player = players[playerNo]
-        player.feed(
-                data
-        ) { r: Boolean ->
-            if (r) {
-                sendResultInt(player.getPlayState(), result)
-            } else {
-                sendResultError("Error", "Failed to feed player",
-                        null, result)
+    private fun release(@NonNull playerId: String, @NonNull result: Result) {
+        val player = players[playerId]
+        player?.let {
+            if (player.release()) {
+                players.remove(playerId)
+                sendResultData(playerId, result)
+                return@let;
             }
         }
+        sendResultError(
+            "Error", "Failed to release player",
+            null, result
+        )
     }
 
-    private fun setVolume(@NonNull playerNo: Int, @NonNull volume: Float, @NonNull result: Result) {
-        val player = players[playerNo]
-        if (player.setVolume(volume)) {
-            sendResultInt(player.getPlayState(), result)
-        } else {
-            sendResultError("Error", "Failed to setVolume player",
-                    null, result)
+    private fun play(@NonNull playerId: String, @NonNull result: Result) {
+        val player = players[playerId]
+        player?.let {
+            if (player?.play()) {
+                sendResultData(player.getPlayState(), result)
+                return@let
+            }
         }
+        sendResultError(
+            "Error", "Failed to play player",
+            null, result
+        )
+    }
+
+    private fun stop(@NonNull playerId: String, @NonNull result: Result) {
+        val player = players[playerId]
+        player?.let {
+            if (player.stop()) {
+                sendResultData(player.getPlayState(), result)
+                return@let
+            }
+        }
+        sendResultError(
+            "Error", "Failed to stop player",
+            null, result
+        )
+    }
+
+    private fun resume(@NonNull playerId: String, @NonNull result: Result) {
+        val player = players[playerId]
+        player?.let {
+            if (player.resume()) {
+                sendResultData(player.getPlayState(), result)
+                return@let
+            }
+        }
+
+        sendResultError(
+            "Error", "Failed to resume player",
+            null, result
+        )
+    }
+
+    private fun pause(@NonNull playerId: String, @NonNull result: Result) {
+        val player = players[playerId]
+        player?.let {
+            if (player.pause()) {
+                sendResultData(player.getPlayState(), result)
+                return@let
+            }
+        }
+        sendResultError(
+            "Error", "Failed to pause player",
+            null, result
+        )
+    }
+
+    private fun feed(@NonNull playerId: String, @NonNull data: ByteArray, @NonNull result: Result) {
+        val player = players[playerId]
+        player?.let {
+            player.feed(
+                data
+            ) { r: Boolean ->
+                if (r) {
+                    sendResultData(player.getPlayState(), result)
+                } else {
+                    sendResultError(
+                        "Error", "Failed to feed player",
+                        null, result
+                    )
+                }
+            }
+            return@let
+        }
+        sendResultError(
+            "Error", "Failed to feed player",
+            null, result
+        )
+    }
+
+    private fun setVolume(
+        @NonNull playerId: String,
+        @NonNull volume: Float,
+        @NonNull result: Result,
+    ) {
+        val player = players[playerId]
+        player?.let {
+            if (player.setVolume(volume)) {
+                sendResultData(player.getPlayState(), result)
+                return@let
+            }
+        }
+        sendResultError(
+            "Error", "Failed to setVolume player",
+            null, result
+        )
     }
 }

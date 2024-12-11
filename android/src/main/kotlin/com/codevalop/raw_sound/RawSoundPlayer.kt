@@ -5,8 +5,8 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
+import android.util.Log
 import androidx.annotation.NonNull
-import io.flutter.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -27,26 +27,24 @@ enum class PCMType {
 
 /** RawSoundPlayer */
 class RawSoundPlayer(@NonNull androidContext: Context, @NonNull bufferSize: Int,
-                     @NonNull sampleRate: Int, @NonNull nChannels: Int, @NonNull pcmType: PCMType) {
+                     @NonNull sampleRate: Int, @NonNull nChannels: Int, @NonNull pcmType: PCMType, @NonNull playerId: String) {
     companion object {
         const val TAG = "RawSoundPlayer"
     }
 
     private val audioTrack: AudioTrack
-    private val semBufferAdded = Semaphore(Int.MAX_VALUE, Int.MAX_VALUE)
-    private val semBufferUsed = Semaphore(Int.MAX_VALUE, Int.MAX_VALUE)
     private val buffers: MutableList<ByteBuffer> = mutableListOf()
-    private val buffersCacheSize = 4
-    private val semAddBufferIdled = Semaphore(1, 0)
-    private val semUseBufferIdled = Semaphore(1, 0)
     private val lckBuffers = Mutex()
     private val pcmType: PCMType
+    private val playerId: String
+    private val onFeedCompleted: () -> Unit = {}
 
     init {
         require(nChannels == 1 || nChannels == 2) { "Only support one or two channels" }
         val audioManager = androidContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val sessionId = audioManager.generateAudioSessionId()
         this.pcmType = pcmType
+        this.playerId = playerId
         val attributes = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
@@ -90,7 +88,14 @@ class RawSoundPlayer(@NonNull androidContext: Context, @NonNull bufferSize: Int,
         }
     }
 
+    fun setOnFeedCompleted(fn: () -> Unit) {
+        onFeedCompleted = fn;
+    }
+
     fun play(): Boolean {
+        if(audioTrack.playState == AudioTrack.PLAYSTATE_PLAYING) {
+            return true;
+        }
         try {
             audioTrack.play()
         } catch (t: Throwable) {
@@ -100,41 +105,20 @@ class RawSoundPlayer(@NonNull androidContext: Context, @NonNull bufferSize: Int,
 
         GlobalScope.launch(Dispatchers.IO) {
             Log.d(TAG, "--> queUseBuffer")
-            semUseBufferIdled.withPermit {
-
-                val n = buffersCacheSize - getBuffersCount()
-                if (n > 0) {
-                    repeat(n) {
-                        semBufferUsed.release()
-                    }
-                } else if (n < 0) {
-                    repeat(-n) {
-                        semBufferAdded.release()
-                    }
+            var nextBuffer = popBuffer();
+            while (nextBuffer != null && nextBuffer.remaining() > 0) {
+                val bytes =
+                    audioTrack.write(nextBuffer, nextBuffer.remaining(), AudioTrack.WRITE_BLOCKING)
+                if (bytes < 0) {
+                    Log.e(TAG, "Failed to write into audio track buffer: $bytes")
+                } else if (bytes == 0) {
+                    Log.w(TAG, "Write zero bytes into audio track buffer")
                 }
-
-                while (audioTrack.playState == AudioTrack.PLAYSTATE_PLAYING) {
-                    withTimeoutOrNull(1000 * 1) {
-                        semBufferAdded.acquire()
-                    } ?: continue
-                    val buffer = popBuffer() ?: continue
-                    // Log.d(TAG, "bufferSize: ${buffer.remaining()}")
-                    while (buffer.remaining() > 0) {
-                        val bytes = audioTrack.write(buffer, buffer.remaining(), AudioTrack.WRITE_BLOCKING)
-                        if (bytes < 0) {
-                            Log.e(TAG, "Failed to write into audio track buffer: $bytes")
-                            break
-                        } else if (bytes == 0) {
-                            Log.w(TAG, "Write zero bytes into audio track buffer")
-                            break
-                        }
-                    }
-                    semBufferUsed.release()
-                }
+                nextBuffer = popBuffer();
             }
-            Log.d(TAG, "<-- queUseBuffer")
+            onFeedCompleted()
         }
-
+        Log.d(TAG, "<-- queUseBuffer")
         return true
     }
 
@@ -150,8 +134,6 @@ class RawSoundPlayer(@NonNull androidContext: Context, @NonNull bufferSize: Int,
         }
         runBlocking {
             clearBuffers()
-            resetSemBufferUsed();
-            resetSemBufferAdded();
         }
         return r
     }
@@ -178,27 +160,9 @@ class RawSoundPlayer(@NonNull androidContext: Context, @NonNull bufferSize: Int,
     }
 
     fun feed(@NonNull data: ByteArray, onDone: (r: Boolean) -> Unit) {
-        if (audioTrack.playState != AudioTrack.PLAYSTATE_PLAYING) {
-            Log.e(TAG, "Player is not playing")
-            onDone(true)
-            return
-        }
-
         GlobalScope.launch(Dispatchers.Default) {
             // Log.d(TAG, "--> queAddBuffer")
-            semAddBufferIdled.withPermit {
-                addBuffer(ByteBuffer.wrap(data))
-                semBufferAdded.release()
-                while (audioTrack.playState == AudioTrack.PLAYSTATE_PLAYING) {
-                    withTimeoutOrNull(1000 * 1) {
-                        semBufferUsed.acquire()
-                    } ?: continue
-                    if (getBuffersCount() < buffersCacheSize) {
-                        break
-                    }
-                }
-                onDone(true)
-            }
+            addBuffer(ByteBuffer.wrap(data))
             // Log.d(TAG, "<-- queAddBuffer")
         }
         // Log.d(TAG, "underrun count: ${audioTrack.underrunCount}")
@@ -237,18 +201,6 @@ class RawSoundPlayer(@NonNull androidContext: Context, @NonNull bufferSize: Int,
         lckBuffers.withLock {
             val size = buffers.size
             return if (size == 0) null else buffers.removeAt(size - 1)
-        }
-    }
-
-    private fun resetSemBufferUsed() {
-        while (semBufferUsed.tryAcquire()) {
-            //
-        }
-    }
-
-    private fun resetSemBufferAdded() {
-        while (semBufferAdded.tryAcquire()) {
-            //
         }
     }
 }
