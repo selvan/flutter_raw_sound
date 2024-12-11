@@ -27,7 +27,7 @@ enum class PCMType {
 
 /** RawSoundPlayer */
 class RawSoundPlayer(@NonNull androidContext: Context, @NonNull bufferSize: Int,
-                     @NonNull sampleRate: Int, @NonNull nChannels: Int, @NonNull pcmType: PCMType, @NonNull playerId: String) {
+                     @NonNull sampleRate: Int, @NonNull nChannels: Int, @NonNull pcmType: PCMType, @NonNull playerId: Int) {
     companion object {
         const val TAG = "RawSoundPlayer"
     }
@@ -36,8 +36,8 @@ class RawSoundPlayer(@NonNull androidContext: Context, @NonNull bufferSize: Int,
     private val buffers: MutableList<ByteBuffer> = mutableListOf()
     private val lckBuffers = Mutex()
     private val pcmType: PCMType
-    private val playerId: String
-    private val onFeedCompleted: () -> Unit = {}
+    private val playerId: Int
+    private var onFeedCompleted: () -> Unit = {}
 
     init {
         require(nChannels == 1 || nChannels == 2) { "Only support one or two channels" }

@@ -24,7 +24,7 @@ class RawSoundPlayerPlatform extends PlatformInterface {
     _instance = instance;
   }
 
-  static final _players = <RawSoundPlayerPrototype, String>{};
+  static final _players = <RawSoundPlayerPrototype, int>{};
 
   static void setFeedCallback(Function(int)? callback) {
     _channel.setMethodCallHandler(_methodCallHandler);
@@ -51,7 +51,7 @@ class RawSoundPlayerPlatform extends PlatformInterface {
     int sampleRate = 16000,
     int pcmType = 0,
   }) async {
-    final playerId = await _channel.invokeMethod<String>('initialize', {
+    final playerId = await _channel.invokeMethod<int>('initialize', {
       'bufferSize': bufferSize,
       'nChannels': nChannels,
       'sampleRate': sampleRate,

@@ -9,17 +9,18 @@ import io.flutter.Log
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
-import io.flutter.plugin.common.MethodChannel.MethodCallHandler
+import io.flutter.plugin.common.MethodChannel.*
+import kotlin.Result
 
 
 /** RawSoundPlugin */
 class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
     companion object {
         const val TAG = "RawSoundPlugin"
-        private var idCounter = 0
-        private fun getId(): String {
-            val currId = "id#${idCounter}";
-            idCounter++;
+        private var playerCount = 1
+        private fun getId(): Int {
+            val currId = playerCount;
+            playerCount++;
             return currId;
         }
     }
@@ -32,7 +33,7 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
 
     private lateinit var androidContext: Context
 
-    private var players: MutableMap<String, RawSoundPlayer> = mutableMapOf()
+    private var players: MutableMap<Int, RawSoundPlayer> = mutableMapOf()
 
     override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(flutterPluginBinding.binaryMessenger, "codevalop.com/raw_sound")
@@ -40,12 +41,12 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
         androidContext = flutterPluginBinding.applicationContext
     }
 
-    override fun onMethodCall(@NonNull call: MethodCall, @NonNull result: Result) {
-        var playerId: Int = -1
+    override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        var playerId = -1
 
         if (call.method != "initialize") {
             playerId = call.argument<Int>("playerId")!!
-            if (playerId < 0 || playerId > players.size) {
+            if (playerId <= 0) {
                 result.error("Invalid Args", "Invalid playerId: $playerId", "")
                 Log.e(TAG, "Invalid playerId: $playerId")
                 return
@@ -108,23 +109,23 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
 
     private fun sendResultError(
         @NonNull errorCode: String, @Nullable errorMessage: String,
-        @Nullable errorDetails: Any?, @NonNull result: Result,
+        @Nullable errorDetails: Any?, @NonNull result: MethodChannel.Result,
     ) {
         Handler(Looper.getMainLooper()).post {
             result.error(errorCode, errorMessage, errorDetails)
         }
     }
 
-    private fun sendResultData(@NonNull payload: String, @NonNull result: Result) {
+    private fun sendResultInt(@NonNull status: Int, @NonNull result: MethodChannel.Result) {
         Handler(Looper.getMainLooper()).post {
-            result.success(payload)
+            result.success(status)
         }
     }
 
     private fun initialize(
         @NonNull bufferSize: Int, @NonNull sampleRate: Int,
         @NonNull nChannels: Int, @NonNull pcmType: PCMType,
-        @NonNull result: Result,
+        @NonNull result: MethodChannel.Result,
     ) {
 
         val playerId = getId();
@@ -135,15 +136,15 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
             channel.invokeMethod("onFeedCompleted", response)
         }
         players[playerId] = player
-        sendResultData(playerId, result)
+        sendResultInt(playerId, result)
     }
 
-    private fun release(@NonNull playerId: String, @NonNull result: Result) {
+    private fun release(@NonNull playerId: Int, @NonNull result: MethodChannel.Result) {
         val player = players[playerId]
         player?.let {
             if (player.release()) {
                 players.remove(playerId)
-                sendResultData(playerId, result)
+                sendResultInt(playerId, result)
                 return@let;
             }
         }
@@ -153,11 +154,11 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
         )
     }
 
-    private fun play(@NonNull playerId: String, @NonNull result: Result) {
+    private fun play(@NonNull playerId: Int, @NonNull result: MethodChannel.Result) {
         val player = players[playerId]
         player?.let {
-            if (player?.play()) {
-                sendResultData(player.getPlayState(), result)
+            if (player.play()) {
+                sendResultInt(player.getPlayState(), result)
                 return@let
             }
         }
@@ -167,11 +168,11 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
         )
     }
 
-    private fun stop(@NonNull playerId: String, @NonNull result: Result) {
+    private fun stop(@NonNull playerId: Int, @NonNull result: MethodChannel.Result) {
         val player = players[playerId]
         player?.let {
             if (player.stop()) {
-                sendResultData(player.getPlayState(), result)
+                sendResultInt(player.getPlayState(), result)
                 return@let
             }
         }
@@ -181,11 +182,11 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
         )
     }
 
-    private fun resume(@NonNull playerId: String, @NonNull result: Result) {
+    private fun resume(@NonNull playerId: Int, @NonNull result: MethodChannel.Result) {
         val player = players[playerId]
         player?.let {
             if (player.resume()) {
-                sendResultData(player.getPlayState(), result)
+                sendResultInt(player.getPlayState(), result)
                 return@let
             }
         }
@@ -196,11 +197,11 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
         )
     }
 
-    private fun pause(@NonNull playerId: String, @NonNull result: Result) {
+    private fun pause(@NonNull playerId: Int, @NonNull result: MethodChannel.Result) {
         val player = players[playerId]
         player?.let {
             if (player.pause()) {
-                sendResultData(player.getPlayState(), result)
+                sendResultInt(player.getPlayState(), result)
                 return@let
             }
         }
@@ -210,14 +211,14 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
         )
     }
 
-    private fun feed(@NonNull playerId: String, @NonNull data: ByteArray, @NonNull result: Result) {
+    private fun feed(@NonNull playerId: Int, @NonNull data: ByteArray, @NonNull result: MethodChannel.Result) {
         val player = players[playerId]
         player?.let {
             player.feed(
                 data
             ) { r: Boolean ->
                 if (r) {
-                    sendResultData(player.getPlayState(), result)
+                    sendResultInt(player.getPlayState(), result)
                 } else {
                     sendResultError(
                         "Error", "Failed to feed player",
@@ -234,14 +235,14 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
     }
 
     private fun setVolume(
-        @NonNull playerId: String,
+        @NonNull playerId: Int,
         @NonNull volume: Float,
-        @NonNull result: Result,
+        @NonNull result: MethodChannel.Result,
     ) {
         val player = players[playerId]
         player?.let {
             if (player.setVolume(volume)) {
-                sendResultData(player.getPlayState(), result)
+                sendResultInt(player.getPlayState(), result)
                 return@let
             }
         }
