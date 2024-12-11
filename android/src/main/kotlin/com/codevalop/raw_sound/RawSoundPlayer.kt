@@ -138,6 +138,7 @@ class RawSoundPlayer(
             while (nextBuffer != null && nextBuffer.remaining() > 0) {
                 val bytes =
                     audioTrack.write(nextBuffer, nextBuffer.remaining(), AudioTrack.WRITE_BLOCKING)
+                Log.w(TAG, "Played buffer")
                 if (bytes < 0) {
                     Log.e(TAG, "Failed to write into audio track buffer: $bytes")
                 } else if (bytes == 0) {

@@ -34,6 +34,7 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
     private lateinit var androidContext: Context
 
     private var players: MutableMap<Int, RawSoundPlayer> = mutableMapOf()
+    private val mHandler = Handler(Looper.getMainLooper())
 
     override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(flutterPluginBinding.binaryMessenger, "codevalop.com/raw_sound")
@@ -111,13 +112,13 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
         @NonNull errorCode: String, @Nullable errorMessage: String,
         @Nullable errorDetails: Any?, @NonNull result: MethodChannel.Result,
     ) {
-        Handler(Looper.getMainLooper()).post {
+        mHandler.post {
             result.error(errorCode, errorMessage, errorDetails)
         }
     }
 
     private fun sendResultInt(@NonNull status: Int, @NonNull result: MethodChannel.Result) {
-        Handler(Looper.getMainLooper()).post {
+        mHandler.post {
             result.success(status)
         }
     }
@@ -132,7 +133,7 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
         val player =
             RawSoundPlayer(androidContext, bufferSize, sampleRate, nChannels, pcmType, playerId)
         player.setOnFeedCompleted {
-            Handler(Looper.getMainLooper()).post {
+            mHandler.post {
                 val response: MutableMap<String, Any> = HashMap()
                 response["playerId"] = playerId
                 channel.invokeMethod("onFeedCompleted", response)
@@ -215,7 +216,11 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
         }
     }
 
-    private fun feed(@NonNull playerId: Int, @NonNull data: ByteArray, @NonNull result: MethodChannel.Result) {
+    private fun feed(
+        @NonNull playerId: Int,
+        @NonNull data: ByteArray,
+        @NonNull result: MethodChannel.Result,
+    ) {
         val player = players[playerId]
         player?.let {
             player.feed(
