@@ -5,17 +5,15 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
+import android.os.Handler
+import android.os.HandlerThread
 import android.util.Log
 import androidx.annotation.NonNull
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import java.nio.ByteBuffer
-import java.util.concurrent.atomic.AtomicBoolean
-
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 enum class PlayState {
     Stopped,
@@ -42,13 +40,30 @@ class RawSoundPlayer(
         const val TAG = "RawSoundPlayer"
     }
 
-    private val audioTrack: AudioTrack
-    private val buffers: MutableList<ByteBuffer> = mutableListOf()
-    private val lckBuffers = Mutex()
+    // Thread-safe synchronization
+    private val audioTrackLock = ReentrantLock()
+
+    // Threadsafe queue to hold PCM byte frames
+    private val audioFrameQueue = ConcurrentLinkedQueue<ByteArray>()
+
+    // Audio playback objects
+    private var audioTrack: AudioTrack?
+    private var playbackThread: HandlerThread?
+    private var playbackHandler: Handler?
+
+    // State management
+    private val playState = AtomicReference(PlayState.Stopped)
+
+    // Frame tracking
+    private val totalFramesQueued = AtomicInteger(0)
+    private val framesPlayedCompletely = AtomicInteger(0)
+    private val framesFeedCompletely = AtomicInteger(0)
+
+    // Completion callback
+    private var onFeedCompleted: (() -> Unit) = {}
+
     private val pcmType: PCMType
     private val playerId: Int
-    private var onFeedCompleted: () -> Unit = {}
-    private val isLooping = AtomicBoolean(false)
 
     init {
         require(nChannels == 1 || nChannels == 2) { "Only support one or two channels" }
@@ -85,24 +100,69 @@ class RawSoundPlayer(
 
         }
 
-        audioTrack = AudioTrack(attributes, format, mBufferSize, AudioTrack.MODE_STREAM, sessionId)
+        audioTrack =
+            AudioTrack(attributes, format, mBufferSize, AudioTrack.MODE_STREAM, sessionId).also {
+                it.setPlaybackPositionUpdateListener(object :
+                    AudioTrack.OnPlaybackPositionUpdateListener {
+                    override fun onMarkerReached(track: AudioTrack?) {
+                        audioTrackLock.withLock {
+                            val completed = framesPlayedCompletely.incrementAndGet();
+                            Log.d(TAG, "Completed feed...completed: ${completed}, totalFramesQueued: ${totalFramesQueued} ");
+                            if (completed == totalFramesQueued.get()) {
+                                Log.d(TAG, "Completed all feeds...");
+                                onFeedCompleted.invoke()
+                                // Reset counters for potential reuse
+                                totalFramesQueued.set(0)
+                                framesPlayedCompletely.set(0)
+                            }
+                        }
+                    }
+
+                    override fun onPeriodicNotification(track: AudioTrack?) {
+                        // Not used in this implementation
+                    }
+                })
+            }
+
+        // Create a dedicated thread for audio playback
+        playbackThread = HandlerThread("AudioPlaybackThread").apply {
+            start()
+        }
+
+        playbackHandler = object : Handler(playbackThread!!.looper) {
+            override fun handleMessage(msg: android.os.Message) {
+                while ((!audioFrameQueue.isEmpty()) && (playState.get() == PlayState.Playing)) {
+                    val audioFrame = audioFrameQueue.poll()
+                    audioFrame?.let { frame ->
+                        // Thread-safe write operation
+                        audioTrackLock.withLock {
+                            // Thread-safe marker setting
+                            val pcmSize = when (pcmType) {
+                                PCMType.PCMI8 -> 1
+                                PCMType.PCMI16 -> 2
+                                PCMType.PCMF32 -> 4
+                            }
+                            audioTrack?.setNotificationMarkerPosition(
+                                (frame.size / pcmSize)
+                            )
+                            audioTrack?.write(frame, 0, frame.size)
+                            val count = framesFeedCompletely.incrementAndGet()
+                            Log.d(TAG,"Done frame  ${count}, MarkerPosition: ${(frame.size / pcmSize)}")
+                        }
+                    }
+                }
+            }
+        }
 
         Log.i(
             TAG,
-            "sessionId: ${audioTrack.audioSessionId}, bufferCapacityInFrames: ${audioTrack.bufferCapacityInFrames}, bufferSizeInFrames: ${audioTrack.bufferSizeInFrames}"
+            "sessionId: ${audioTrack?.audioSessionId}, bufferCapacityInFrames: ${audioTrack?.bufferCapacityInFrames}, bufferSizeInFrames: ${audioTrack?.bufferSizeInFrames}"
         )
     }
 
-    fun release(): Boolean {
-        runBlocking {
-            clearBuffers()
-        }
-        audioTrack.release()
-        return true
-    }
 
     fun getPlayState(): Int {
-        return when (audioTrack.playState) {
+        return when (audioTrack?.playState) {
             AudioTrack.PLAYSTATE_PAUSED -> PlayState.Paused.ordinal
             AudioTrack.PLAYSTATE_PLAYING -> PlayState.Playing.ordinal
             else -> PlayState.Stopped.ordinal
@@ -114,136 +174,104 @@ class RawSoundPlayer(
     }
 
     fun play(): Boolean {
-        if (audioTrack.playState == AudioTrack.PLAYSTATE_PLAYING) {
+        if (audioTrack?.playState == AudioTrack.PLAYSTATE_PLAYING) {
             return true;
         }
         try {
-            audioTrack.play()
+            audioTrackLock.withLock {
+                audioTrack?.play()
+            }
+            playState.set(PlayState.Playing)
+            playbackHandler?.sendEmptyMessage(0)
         } catch (t: Throwable) {
             Log.e(TAG, "Trying to play an uninitialized audio track")
             return false
         }
 
-        loopAllContent()
-        Log.d(TAG, "<-- queUseBuffer")
+        Log.d(TAG, "Playing..")
         return true
     }
 
-    private fun loopAllContent() {
-        val _isReadyToGo = isLooping.compareAndSet(false, true)
-        if (!_isReadyToGo) {
-            return
-        }
-        GlobalScope.launch(Dispatchers.IO) {
-            Log.d(TAG, "--> queUseBuffer")
-            var nextBuffer = popBuffer();
-            while (nextBuffer != null && nextBuffer.remaining() > 0) {
-                val bytes =
-                    audioTrack.write(nextBuffer, nextBuffer.remaining(), AudioTrack.WRITE_BLOCKING)
-                Log.w(TAG, "Played buffer")
-                if (bytes < 0) {
-                    Log.e(TAG, "Failed to write into audio track buffer: $bytes")
-                } else if (bytes == 0) {
-                    Log.w(TAG, "Write zero bytes into audio track buffer")
-                }
-                nextBuffer = popBuffer();
-            }
-            onFeedCompleted()
-            isLooping.set(false)
-
-            synchronized(this) {
-                val size = buffers.size
-                if (size > 0) {
-                    loopAllContent();
-                }
-            }
-        }
-    }
 
     fun stop(): Boolean {
-        val r = try {
-            audioTrack.pause()
-            audioTrack.flush()
-            audioTrack.stop()
-            true
-        } catch (t: Throwable) {
-            Log.e(TAG, "Trying to stop an uninitialized audio track")
-            false
+        audioTrackLock.withLock {
+            audioTrack?.pause()
+            audioTrack?.flush()
+            audioTrack?.stop()
         }
-        runBlocking {
-            clearBuffers()
-        }
-        return r
+        audioFrameQueue.clear()
+        totalFramesQueued.set(0)
+        playbackHandler?.removeCallbacksAndMessages(null);
+        framesFeedCompletely.set(0)
+        framesPlayedCompletely.set(0)
+        playState.set(PlayState.Stopped)
+        Log.d(TAG, "Stopped..")
+        return true
     }
 
     fun pause(): Boolean {
-        val r = try {
-            audioTrack.pause()
-            true
-        } catch (t: Throwable) {
-            Log.e(TAG, "Trying to pause an uninitialized audio track")
-            false
+        audioTrackLock.withLock {
+            audioTrack?.pause()
         }
-        return r
+        playbackHandler?.removeCallbacksAndMessages(null);
+        playState.set(PlayState.Paused)
+        Log.d(TAG, "Paused..")
+        return true
     }
 
     fun resume(): Boolean {
-        return try {
-            audioTrack.play()
-            true
-        } catch (t: Throwable) {
-            Log.e(TAG, "Trying to resume an uninitialized audio track")
-            false
+        audioTrackLock.withLock {
+            audioTrack?.play()
         }
+        playbackHandler?.removeCallbacksAndMessages(null);
+        playbackHandler?.sendEmptyMessage(0)
+        playState.set(PlayState.Playing)
+        Log.d(TAG, "Resumed..")
+        return true
     }
 
-    fun feed(@NonNull data: ByteArray, onDone: (r: Boolean) -> Unit) {
-        GlobalScope.launch(Dispatchers.Default) {
-            // Log.d(TAG, "--> queAddBuffer")
-            addBuffer(ByteBuffer.wrap(data))
-            if (audioTrack.playState == AudioTrack.PLAYSTATE_PLAYING) {
-                loopAllContent()
-            }
-            onDone(true)
-            // Log.d(TAG, "<-- queAddBuffer")
+    fun feed(@NonNull data: ByteArray): Boolean {
+        if (!audioFrameQueue.offer(data)) {
+            return false;
         }
-        // Log.d(TAG, "underrun count: ${audioTrack.underrunCount}")
+
+        totalFramesQueued.incrementAndGet()
+        if (playState.get() == PlayState.Playing) {
+            playbackHandler?.sendEmptyMessage(0)
+        }
+        return true;
     }
 
     fun setVolume(@NonNull volume: Float): Boolean {
-        val r = audioTrack.setVolume(volume)
-        if (r == AudioTrack.SUCCESS) {
-            return true
-        }
-        Log.e(TAG, "Failed to setVolume of audio track: $r")
-        return false
-    }
-
-    // ---------------------------------------------------------------------------------------------
-
-    private suspend fun clearBuffers() {
-        lckBuffers.withLock {
-            buffers.clear()
+        audioTrackLock.withLock {
+            val r = audioTrack?.setVolume(volume)
+            if (r == AudioTrack.SUCCESS) {
+                return true
+            } else {
+                Log.e(TAG, "Failed to setVolume of audio track: $r")
+                return false
+            }
         }
     }
 
-    private suspend fun getBuffersCount(): Int {
-        lckBuffers.withLock {
-            return buffers.size
-        }
-    }
+    fun release(): Boolean {
+        playbackHandler?.removeCallbacksAndMessages(null);
+        playState.set(PlayState.Stopped)
 
-    private suspend fun addBuffer(buffer: ByteBuffer) {
-        lckBuffers.withLock {
-            buffers.add(0, buffer)
+        audioTrackLock.withLock {
+            audioTrack?.release()
+            audioTrack = null;
         }
-    }
 
-    private suspend fun popBuffer(): ByteBuffer? {
-        lckBuffers.withLock {
-            val size = buffers.size
-            return if (size == 0) null else buffers.removeAt(size - 1)
-        }
+        playbackThread?.quitSafely()
+        playbackHandler = null
+        playbackThread = null
+
+        totalFramesQueued.set(0)
+        framesFeedCompletely.set(0)
+        framesPlayedCompletely.set(0)
+        onFeedCompleted = {}
+        return true
     }
 }
 

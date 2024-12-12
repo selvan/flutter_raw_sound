@@ -223,17 +223,13 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
     ) {
         val player = players[playerId]
         player?.let {
-            player.feed(
-                data
-            ) { r: Boolean ->
-                if (r) {
-                    sendResultInt(player.getPlayState(), result)
-                } else {
-                    sendResultError(
-                        "Error", "Failed to feed player",
-                        null, result
-                    )
-                }
+            if (player.feed(data)) {
+                sendResultInt(player.getPlayState(), result)
+            } else {
+                sendResultError(
+                    "Error", "Failed to feed player",
+                    null, result
+                )
             }
         }
     }
