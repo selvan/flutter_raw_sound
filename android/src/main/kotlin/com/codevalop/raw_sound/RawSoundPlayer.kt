@@ -24,6 +24,7 @@ enum class PlayState {
 }
 
 enum class PCMType {
+    PCMI8,
     PCMI16,
     PCMF32,
 }
@@ -60,6 +61,7 @@ class RawSoundPlayer(
             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
             .build()
         val encoding = when (pcmType) {
+            PCMType.PCMI8 -> AudioFormat.ENCODING_PCM_8BIT
             PCMType.PCMI16 -> AudioFormat.ENCODING_PCM_16BIT
             PCMType.PCMF32 -> AudioFormat.ENCODING_PCM_FLOAT
         }
@@ -78,7 +80,7 @@ class RawSoundPlayer(
             mBufferSize = AudioTrack.getMinBufferSize(
                 sampleRate,
                 if (nChannels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO,
-                AudioFormat.ENCODING_PCM_16BIT
+                encoding
             );
 
         }
