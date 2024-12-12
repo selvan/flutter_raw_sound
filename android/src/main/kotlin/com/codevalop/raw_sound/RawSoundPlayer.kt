@@ -97,7 +97,7 @@ class RawSoundPlayer(
                 if (nChannels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO,
                 encoding
             );
-
+            Log.d(TAG, "mBufferSize is ${mBufferSize}");
         }
 
         audioTrack =
@@ -147,7 +147,7 @@ class RawSoundPlayer(
                             )
                             audioTrack?.write(frame, 0, frame.size)
                             val count = framesFeedCompletely.incrementAndGet()
-                            Log.d(TAG,"Done frame  ${count}, MarkerPosition: ${(frame.size / pcmSize)}")
+                            Log.d(TAG,"Done frame  ${count}, frame.size: ${frame.size}, MarkerPosition: ${(frame.size / pcmSize)}")
                         }
                     }
                 }
