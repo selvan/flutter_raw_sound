@@ -132,14 +132,14 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
         val playerId = getId();
         val player =
             RawSoundPlayer(androidContext, bufferSize, sampleRate, nChannels, pcmType, playerId)
-        player.setOnFeedCompleted {
-            mHandler.post {
-                val response: MutableMap<String, Any> = HashMap()
-                response["playerId"] = playerId
-                channel.invokeMethod("onFeedCompleted", response)
-                Log.d(TAG, "sent onFeedCompleted for playerId: ${playerId}")
-            }
-        }
+//        player.setOnFeedCompleted {
+//            mHandler.post {
+//                val response: MutableMap<String, Any> = HashMap()
+//                response["playerId"] = playerId
+//                channel.invokeMethod("onFeedCompleted", response)
+//                Log.d(TAG, "sent onFeedCompleted for playerId: ${playerId}")
+//            }
+//        }
         players[playerId] = player
         sendResultInt(playerId, result)
     }
