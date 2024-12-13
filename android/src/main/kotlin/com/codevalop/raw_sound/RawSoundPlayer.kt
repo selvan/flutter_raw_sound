@@ -54,14 +54,6 @@ class RawSoundPlayer(
     // State management
     private val playState = AtomicReference(PlayState.Stopped)
 
-    // Frame tracking
-    private val totalFramesQueued = AtomicInteger(0)
-    private val framesPlayedCompletely = AtomicInteger(0)
-    private val framesFeedCompletely = AtomicInteger(0)
-
-    // Completion callback
-    private var onFeedCompleted: (() -> Unit) = {}
-
     private val pcmType: PCMType
     private val playerId: Int
 
@@ -101,28 +93,7 @@ class RawSoundPlayer(
         }
 
         audioTrack =
-            AudioTrack(attributes, format, mBufferSize, AudioTrack.MODE_STREAM, sessionId).also {
-                it.setPlaybackPositionUpdateListener(object :
-                    AudioTrack.OnPlaybackPositionUpdateListener {
-                    override fun onMarkerReached(track: AudioTrack?) {
-                        audioTrackLock.withLock {
-                            val completed = framesPlayedCompletely.incrementAndGet();
-                            Log.d(TAG, "Completed feed...completed: ${completed}, totalFramesQueued: ${totalFramesQueued} ");
-                            if (completed == totalFramesQueued.get()) {
-                                Log.d(TAG, "Completed all feeds...");
-                                onFeedCompleted.invoke()
-                                // Reset counters for potential reuse
-                                totalFramesQueued.set(0)
-                                framesPlayedCompletely.set(0)
-                            }
-                        }
-                    }
-
-                    override fun onPeriodicNotification(track: AudioTrack?) {
-                        // Not used in this implementation
-                    }
-                })
-            }
+            AudioTrack(attributes, format, mBufferSize, AudioTrack.MODE_STREAM, sessionId)
 
         // Create a dedicated thread for audio playback
         playbackThread = HandlerThread("AudioPlaybackThread").apply {
@@ -137,17 +108,7 @@ class RawSoundPlayer(
                         // Thread-safe write operation
                         audioTrackLock.withLock {
                             // Thread-safe marker setting
-                            val pcmSize = when (pcmType) {
-                                PCMType.PCMI8 -> 1
-                                PCMType.PCMI16 -> 2
-                                PCMType.PCMF32 -> 4
-                            }
-                            audioTrack?.setNotificationMarkerPosition(
-                                (frame.size / pcmSize)
-                            )
-                            audioTrack?.write(frame, 0, frame.size)
-                            val count = framesFeedCompletely.incrementAndGet()
-                            Log.d(TAG,"Done frame  ${count}, frame.size: ${frame.size}, MarkerPosition: ${(frame.size / pcmSize)}")
+                            audioTrack?.write(frame, 0, frame.size, AudioTrack.WRITE_BLOCKING)
                         }
                     }
                 }
@@ -167,10 +128,6 @@ class RawSoundPlayer(
             AudioTrack.PLAYSTATE_PLAYING -> PlayState.Playing.ordinal
             else -> PlayState.Stopped.ordinal
         }
-    }
-
-    fun setOnFeedCompleted(fn: () -> Unit) {
-        onFeedCompleted = fn;
     }
 
     fun play(): Boolean {
@@ -200,10 +157,7 @@ class RawSoundPlayer(
             audioTrack?.stop()
         }
         audioFrameQueue.clear()
-        totalFramesQueued.set(0)
         playbackHandler?.removeCallbacksAndMessages(null);
-        framesFeedCompletely.set(0)
-        framesPlayedCompletely.set(0)
         playState.set(PlayState.Stopped)
         Log.d(TAG, "Stopped..")
         return true
@@ -235,7 +189,6 @@ class RawSoundPlayer(
             return false;
         }
 
-        totalFramesQueued.incrementAndGet()
         if (playState.get() == PlayState.Playing) {
             playbackHandler?.sendEmptyMessage(0)
         }
@@ -267,10 +220,6 @@ class RawSoundPlayer(
         playbackHandler = null
         playbackThread = null
 
-        totalFramesQueued.set(0)
-        framesFeedCompletely.set(0)
-        framesPlayedCompletely.set(0)
-        onFeedCompleted = {}
         return true
     }
 }
