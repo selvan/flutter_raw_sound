@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:synchronized/synchronized.dart';
 
 import 'package:raw_sound/raw_sound_platform.dart';

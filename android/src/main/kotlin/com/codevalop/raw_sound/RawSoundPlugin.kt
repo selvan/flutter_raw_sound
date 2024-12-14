@@ -1,6 +1,7 @@
 package com.codevalop.raw_sound
 
 import android.content.Context
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import androidx.annotation.NonNull
@@ -9,8 +10,7 @@ import io.flutter.Log
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
-import io.flutter.plugin.common.MethodChannel.*
-import kotlin.Result
+import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 
 
 /** RawSoundPlugin */
@@ -57,7 +57,7 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
 
         when (call.method) {
             "getPlatformVersion" -> {
-                result.success("Android ${android.os.Build.VERSION.RELEASE}")
+                result.success("Android ${Build.VERSION.RELEASE}")
             }
 
             "initialize" -> {
@@ -131,15 +131,23 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
 
         val playerId = getId();
         val player =
-            RawSoundPlayer(androidContext, bufferSize, sampleRate, nChannels, pcmType, playerId)
-//        player.setOnFeedCompleted {
-//            mHandler.post {
-//                val response: MutableMap<String, Any> = HashMap()
-//                response["playerId"] = playerId
-//                channel.invokeMethod("onFeedCompleted", response)
-//                Log.d(TAG, "sent onFeedCompleted for playerId: ${playerId}")
-//            }
-//        }
+            RawSoundPlayer(
+                androidContext,
+                bufferSize,
+                sampleRate,
+                nChannels,
+                pcmType,
+                playerId
+            ).also {
+                it.setOnFeedCompleted { playerId ->
+                    val map: HashMap<String, Any> = HashMap()
+                    map["playerId"] = playerId
+                    Log.d(TAG, "onFeedCompleted for playerId ${playerId}")
+                    mHandler.post {
+                        channel.invokeMethod("onFeedCompleted", map)
+                    }
+                }
+            }
         players[playerId] = player
         sendResultInt(playerId, result)
     }
@@ -217,11 +225,11 @@ class RawSoundPlugin : FlutterPlugin, MethodCallHandler {
     }
 
     private fun feed(
-        @NonNull playerId: Int,
+        @NonNull playerNo: Int,
         @NonNull data: ByteArray,
         @NonNull result: MethodChannel.Result,
     ) {
-        val player = players[playerId]
+        val player = players[playerNo]
         player?.let {
             if (player.feed(data)) {
                 sendResultInt(player.getPlayState(), result)

@@ -7,13 +7,14 @@ import android.media.AudioManager
 import android.media.AudioTrack
 import android.os.Handler
 import android.os.HandlerThread
-import android.util.Log
+import android.os.Process.THREAD_PRIORITY_URGENT_AUDIO
 import androidx.annotation.NonNull
-import java.util.concurrent.ConcurrentLinkedQueue
+import io.flutter.Log
+import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
+
 
 enum class PlayState {
     Stopped,
@@ -22,7 +23,6 @@ enum class PlayState {
 }
 
 enum class PCMType {
-    PCMI8,
     PCMI16,
     PCMF32,
 }
@@ -40,22 +40,17 @@ class RawSoundPlayer(
         const val TAG = "RawSoundPlayer"
     }
 
-    // Thread-safe synchronization
-    private val audioTrackLock = ReentrantLock()
-
-    // Threadsafe queue to hold PCM byte frames
-    private val audioFrameQueue = ConcurrentLinkedQueue<ByteArray>()
-
-    // Audio playback objects
-    private var audioTrack: AudioTrack?
-    private var playbackThread: HandlerThread?
-    private var playbackHandler: Handler?
-
-    // State management
-    private val playState = AtomicReference(PlayState.Stopped)
-
+    private var audioTrack: AudioTrack? = null
     private val pcmType: PCMType
+
+    private var playbackThread: HandlerThread? = null
+    private var playbackHandler: Handler? = null
+    private val audioTrackLock = ReentrantLock()
     private val playerId: Int
+
+    private val frameCounter = AtomicInteger(0)
+
+    private var onFeedCompleted: (playerId: Int) -> Unit = {}
 
     init {
         require(nChannels == 1 || nChannels == 2) { "Only support one or two channels" }
@@ -68,7 +63,6 @@ class RawSoundPlayer(
             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
             .build()
         val encoding = when (pcmType) {
-            PCMType.PCMI8 -> AudioFormat.ENCODING_PCM_8BIT
             PCMType.PCMI16 -> AudioFormat.ENCODING_PCM_16BIT
             PCMType.PCMF32 -> AudioFormat.ENCODING_PCM_FLOAT
         }
@@ -89,30 +83,19 @@ class RawSoundPlayer(
                 if (nChannels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO,
                 encoding
             );
-            Log.d(TAG, "mBufferSize is ${mBufferSize}");
+
         }
 
-        audioTrack =
-            AudioTrack(attributes, format, mBufferSize, AudioTrack.MODE_STREAM, sessionId)
+        audioTrack = AudioTrack(attributes, format, mBufferSize, AudioTrack.MODE_STREAM, sessionId)
 
-        // Create a dedicated thread for audio playback
-        playbackThread = HandlerThread("AudioPlaybackThread").apply {
-            start()
-        }
 
-        playbackHandler = object : Handler(playbackThread!!.looper) {
-            override fun handleMessage(msg: android.os.Message) {
-                while ((!audioFrameQueue.isEmpty()) && (playState.get() == PlayState.Playing)) {
-                    val audioFrame = audioFrameQueue.poll()
-                    audioFrame?.let { frame ->
-                        // Thread-safe write operation
-                        audioTrackLock.withLock {
-                            // Thread-safe marker setting
-                            audioTrack?.write(frame, 0, frame.size, AudioTrack.WRITE_BLOCKING)
-                        }
-                    }
-                }
+        playbackThread =
+            HandlerThread("RawSoundPlayer-${playerId}", THREAD_PRIORITY_URGENT_AUDIO).apply {
+                start()
             }
+
+        playbackHandler = Handler(playbackThread!!.looper).also {
+            audioTrack?.play()
         }
 
         Log.i(
@@ -121,6 +104,21 @@ class RawSoundPlayer(
         )
     }
 
+    fun setOnFeedCompleted(fn: (playerId: Int) -> Unit) {
+        this.onFeedCompleted = fn;
+    }
+
+    fun release(): Boolean {
+        playbackHandler?.removeCallbacksAndMessages(null);
+
+        audioTrackLock.withLock {
+            audioTrack?.release()
+        }
+
+        playbackThread?.quitSafely()
+
+        return true
+    }
 
     fun getPlayState(): Int {
         return when (audioTrack?.playState) {
@@ -138,8 +136,6 @@ class RawSoundPlayer(
             audioTrackLock.withLock {
                 audioTrack?.play()
             }
-            playState.set(PlayState.Playing)
-            playbackHandler?.sendEmptyMessage(0)
         } catch (t: Throwable) {
             Log.e(TAG, "Trying to play an uninitialized audio track")
             return false
@@ -156,9 +152,7 @@ class RawSoundPlayer(
             audioTrack?.flush()
             audioTrack?.stop()
         }
-        audioFrameQueue.clear()
         playbackHandler?.removeCallbacksAndMessages(null);
-        playState.set(PlayState.Stopped)
         Log.d(TAG, "Stopped..")
         return true
     }
@@ -168,7 +162,6 @@ class RawSoundPlayer(
             audioTrack?.pause()
         }
         playbackHandler?.removeCallbacksAndMessages(null);
-        playState.set(PlayState.Paused)
         Log.d(TAG, "Paused..")
         return true
     }
@@ -179,20 +172,28 @@ class RawSoundPlayer(
         }
         playbackHandler?.removeCallbacksAndMessages(null);
         playbackHandler?.sendEmptyMessage(0)
-        playState.set(PlayState.Playing)
         Log.d(TAG, "Resumed..")
         return true
     }
 
     fun feed(@NonNull data: ByteArray): Boolean {
-        if (!audioFrameQueue.offer(data)) {
-            return false;
+        if (audioTrack?.playState != AudioTrack.PLAYSTATE_PLAYING) {
+            Log.e(TAG, "Player is not playing")
+            play()
         }
 
-        if (playState.get() == PlayState.Playing) {
-            playbackHandler?.sendEmptyMessage(0)
+        playbackHandler?.post {
+            val _data = ByteBuffer.wrap(data)
+            audioTrack?.write(_data, _data.remaining(), AudioTrack.WRITE_BLOCKING)
+            val remainingFrameCount = frameCounter.decrementAndGet()
+            Log.d(TAG, "remainingFrameCount is ${remainingFrameCount}")
+            if(remainingFrameCount == 0) {
+                this.onFeedCompleted(this.playerId)
+            }
         }
-        return true;
+        frameCounter.incrementAndGet()
+        return true
+        // Log.d(TAG, "underrun count: ${audioTrack?.underrunCount}")
     }
 
     fun setVolume(@NonNull volume: Float): Boolean {
@@ -205,22 +206,6 @@ class RawSoundPlayer(
                 return false
             }
         }
-    }
-
-    fun release(): Boolean {
-        playbackHandler?.removeCallbacksAndMessages(null);
-        playState.set(PlayState.Stopped)
-
-        audioTrackLock.withLock {
-            audioTrack?.release()
-            audioTrack = null;
-        }
-
-        playbackThread?.quitSafely()
-        playbackHandler = null
-        playbackThread = null
-
-        return true
     }
 }
 

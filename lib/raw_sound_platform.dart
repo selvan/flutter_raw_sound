@@ -12,7 +12,9 @@ abstract class RawSoundPlayerPrototype {
 const MethodChannel _channel = MethodChannel('codevalop.com/raw_sound');
 
 class RawSoundPlayerPlatform extends PlatformInterface {
-  RawSoundPlayerPlatform() : super(token: _token);
+  RawSoundPlayerPlatform() : super(token: _token) {
+    _channel.setMethodCallHandler(_methodCallHandler);
+  }
 
   static final Object _token = Object();
 
@@ -23,7 +25,6 @@ class RawSoundPlayerPlatform extends PlatformInterface {
   static set instance(RawSoundPlayerPlatform instance) {
     PlatformInterface.verifyToken(instance, _token);
     _instance = instance;
-    _channel.setMethodCallHandler(_methodCallHandler);
   }
 
   static final _players = <RawSoundPlayerPrototype, int>{};
@@ -32,9 +33,10 @@ class RawSoundPlayerPlatform extends PlatformInterface {
     debugPrint("_methodCallHandler, call.method is ${call.method}");
     switch (call.method) {
       case 'onFeedCompleted':
-        debugPrint("onFeedCompleted received, playerId: ${call.arguments["playerId"]}");
+        debugPrint("onFeedCompleted received, playerId: ${call.arguments["playerId"]},  entries ${ _players.entries.length}");
         int playerId = call.arguments["playerId"] as int;
         MapEntry? entry = _players.entries.firstWhereOrNull((element) => element.value == playerId);
+        debugPrint("Entry for playerId: ${playerId} is null ${entry == null}");
         if(entry !=null) {
           (entry.key as RawSoundPlayerPrototype).onFeedCompleted();
         }
@@ -131,14 +133,5 @@ class RawSoundPlayerPlatform extends PlatformInterface {
       'volume': volume,
     });
     return ret!;
-  }
-
-  Future<void> onFeedCompleted(
-    RawSoundPlayerPrototype player,
-  ) async {
-    final playerId = _players[player];
-    await _channel.invokeMethod('release', {
-      'playerId': playerId,
-    });
   }
 }
