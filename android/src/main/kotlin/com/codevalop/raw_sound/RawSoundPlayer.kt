@@ -22,6 +22,10 @@ enum class PlayState {
     Paused,
 }
 
+/*
+ Don't change this order, from Dart, enum value is supplied as index position
+ You may add new value at at the end here and at dart position
+*/
 enum class PCMType {
     PCMI16,
     PCMF32,
@@ -171,7 +175,6 @@ class RawSoundPlayer(
             audioTrack?.play()
         }
         playbackHandler?.removeCallbacksAndMessages(null);
-        playbackHandler?.sendEmptyMessage(0)
         Log.d(TAG, "Resumed..")
         return true
     }
