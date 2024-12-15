@@ -15,7 +15,10 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
-
+/*
+ Don't change this order
+ Values are sent to dart as a ordinal values
+*/
 enum class PlayState {
     Stopped,
     Playing,
