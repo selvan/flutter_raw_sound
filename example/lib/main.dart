@@ -1,7 +1,7 @@
 import 'dart:typed_data'; // for Uint8List
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:raw_sound/raw_sound_player.dart';
 
 void main() {
