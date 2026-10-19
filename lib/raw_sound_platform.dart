@@ -1,8 +1,7 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:collection/collection.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:logging/logging.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 abstract class RawSoundPlayerPrototype {
@@ -12,6 +11,8 @@ abstract class RawSoundPlayerPrototype {
 const MethodChannel _channel = MethodChannel('codevalop.com/raw_sound');
 
 class RawSoundPlayerPlatform extends PlatformInterface {
+  static final log = Logger('RawSoundPlayerPlatform');
+
   RawSoundPlayerPlatform() : super(token: _token) {
     _channel.setMethodCallHandler(_methodCallHandler);
   }
@@ -30,19 +31,31 @@ class RawSoundPlayerPlatform extends PlatformInterface {
   static final _players = <RawSoundPlayerPrototype, int>{};
 
   static Future<dynamic> _methodCallHandler(MethodCall call) async {
-    debugPrint("_methodCallHandler, call.method is ${call.method}");
+    log.fine(
+      () =>
+          "_methodCallHandler, call.method is ${call.method}",
+    );
     switch (call.method) {
       case 'onFeedCompleted':
-        debugPrint("onFeedCompleted received, playerId: ${call.arguments["playerId"]},  entries ${ _players.entries.length}");
+        log.fine(
+          () =>
+              "onFeedCompleted received, playerId: ${call.arguments["playerId"]},  entries ${ _players.entries.length}",
+        );
         int playerId = call.arguments["playerId"] as int;
         MapEntry? entry = _players.entries.firstWhereOrNull((element) => element.value == playerId);
-        debugPrint("Entry for playerId: ${playerId} is null ${entry == null}");
+        log.fine(
+          () =>
+              "Entry for playerId: ${playerId} is null ${entry == null}",
+        );
         if(entry !=null) {
           (entry.key as RawSoundPlayerPrototype).onFeedCompleted();
         }
         break;
       default:
-        print('Method not implemented');
+        log.fine(
+          () =>
+              'Method not implemented',
+        );
     }
   }
 

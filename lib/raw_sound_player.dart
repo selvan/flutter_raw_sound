@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
+import 'package:logging/logging.dart';
 import 'package:synchronized/synchronized.dart';
 
 import 'package:raw_sound/raw_sound_platform.dart';
@@ -30,6 +31,8 @@ enum PlayState {
 
 /// A player for playing the raw PCM audio data
 class RawSoundPlayer implements RawSoundPlayerPrototype {
+  static final log = Logger('RawSoundPlayer');
+
   final _lock = Lock();
 
   bool _isInited = false;
@@ -76,7 +79,10 @@ class RawSoundPlayer implements RawSoundPlayerPrototype {
     int sampleRate = 16000,
     RawSoundPCMType pcmType = RawSoundPCMType.PCMI16,
   }) async {
-    print('RS:---> initialize');
+    log.fine(
+      () =>
+          'RS:---> initialize',
+    );
 
     await _lock.synchronized(() async {
       _ensureUninited();
@@ -92,7 +98,10 @@ class RawSoundPlayer implements RawSoundPlayerPrototype {
       _isInited = true;
     });
 
-    print('RS:<--- initialize');
+    log.fine(
+      () =>
+          'RS:<--- initialize',
+    );
   }
 
   /// Releases the player
@@ -101,7 +110,10 @@ class RawSoundPlayer implements RawSoundPlayerPrototype {
   ///
   /// Before the releasing the playback will be stopped
   Future<void> release() async {
-    print('RS:---> release');
+    log.fine(
+      () =>
+          'RS:---> release',
+    );
 
     await _lock.synchronized(() async {
       _ensureInited();
@@ -115,7 +127,10 @@ class RawSoundPlayer implements RawSoundPlayerPrototype {
       _isInited = false;
     });
 
-    print('RS:<--- release');
+    log.fine(
+      () =>
+          'RS:<--- release',
+    );
   }
 
   /// Starts the playback
@@ -124,7 +139,10 @@ class RawSoundPlayer implements RawSoundPlayerPrototype {
   ///
   /// Throws an [Exception] if the playback is not started
   Future<void> play() async {
-    print('RS:---> play');
+    log.fine(
+      () =>
+          'RS:---> play',
+    );
 
     await _lock.synchronized(() async {
       _ensureInited();
@@ -138,7 +156,10 @@ class RawSoundPlayer implements RawSoundPlayerPrototype {
       }
     });
 
-    print('RS:<--- play');
+    log.fine(
+      () =>
+          'RS:<--- play',
+    );
   }
 
   /// Stops the playback
@@ -149,7 +170,10 @@ class RawSoundPlayer implements RawSoundPlayerPrototype {
   ///
   /// Stops the playback will drop the queued buffers
   Future<void> stop() async {
-    print('RS:---> stop');
+    log.fine(
+      () =>
+          'RS:---> stop',
+    );
 
     await _lock.synchronized(() async {
       _ensureInited();
@@ -157,7 +181,10 @@ class RawSoundPlayer implements RawSoundPlayerPrototype {
       await _stop();
     });
 
-    print('RS:<--- stop');
+    log.fine(
+      () =>
+          'RS:<--- stop',
+    );
   }
 
   /// Pauses the playback
@@ -168,7 +195,10 @@ class RawSoundPlayer implements RawSoundPlayerPrototype {
   ///
   /// Pauses the playback will not drop the queued buffers
   Future<void> pause() async {
-    print('RS:---> pause');
+    log.fine(
+      () =>
+          'RS:---> pause',
+    );
 
     await _lock.synchronized(() async {
       _ensureInited();
@@ -182,7 +212,10 @@ class RawSoundPlayer implements RawSoundPlayerPrototype {
       }
     });
 
-    print('RS:<--- pause');
+    log.fine(
+      () =>
+          'RS:<--- pause',
+    );
   }
 
   /// Resumes the playback that being paused
@@ -191,7 +224,10 @@ class RawSoundPlayer implements RawSoundPlayerPrototype {
   ///
   /// Throws an [Exception] if the playback is not resumed
   Future<void> resume() async {
-    print('RS:---> resume');
+    log.fine(
+      () =>
+          'RS:---> resume',
+    );
 
     await _lock.synchronized(() async {
       _ensureInited();
@@ -205,7 +241,10 @@ class RawSoundPlayer implements RawSoundPlayerPrototype {
       }
     });
 
-    print('RS:<--- resume');
+    log.fine(
+      () =>
+          'RS:<--- resume',
+    );
   }
 
   /// Feeds the player with raw PCM [data] block
@@ -236,7 +275,10 @@ class RawSoundPlayer implements RawSoundPlayerPrototype {
   ///
   /// The [volume] should be in range of [0.0, 1.0]
   Future<void> setVolume(double volume) async {
-    print('RS:---> setVolume');
+    log.fine(
+      () =>
+          'RS:---> setVolume',
+    );
 
     await _lock.synchronized(() async {
       _ensureInited();
@@ -248,7 +290,10 @@ class RawSoundPlayer implements RawSoundPlayerPrototype {
       _playState = PlayState.values[state];
     });
 
-    print('RS:---> setVolume');
+    log.fine(
+      () =>
+          'RS:---> setVolume',
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -266,7 +311,10 @@ class RawSoundPlayer implements RawSoundPlayerPrototype {
   }
 
   Future<void> _stop() async {
-    print('RS:---> _stop');
+    log.fine(
+      () =>
+          'RS:---> _stop',
+    );
 
     var state = await RawSoundPlayerPlatform.instance.stop(
       this,
@@ -276,7 +324,10 @@ class RawSoundPlayer implements RawSoundPlayerPrototype {
       throw Exception('Player is not stopped');
     }
 
-    print('RS:<--- _stop');
+    log.fine(
+      () =>
+          'RS:<--- _stop',
+    );
   }
 
   onFeedCompleted() {
